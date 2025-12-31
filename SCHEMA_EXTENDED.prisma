@@ -1,0 +1,363 @@
+// ============================================
+// EXTENDED PRISMA SCHEMA - Vendor, Admin, Community
+// ============================================
+
+// ============================================
+// INVENTORY & MERCHANT MODELS
+// ============================================
+
+model InventoryItem {
+  id            String     @id @default(cuid())
+  venueId       String
+  venue         Venue      @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  name          String     // e.g., Cricket bat, Stumps
+  category      ItemCategory
+  quantity      Int
+  pricePerUnit  Float
+  imageUrl      String?
+  isAvailable   Boolean    @default(true)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@index([venueId])
+  @@map("inventory_items")
+}
+
+enum ItemCategory {
+  EQUIPMENT    // Sports equipment
+  FOOD         // Food & Beverages
+  PARKING      // Parking add-on
+  FACILITY     // Facility upgrades
+}
+
+model DynamicPrice {
+  id            String     @id @default(cuid())
+  slotId        String     @unique
+  slot          Slot       @relation(fields: [slotId], references: [id], onDelete: Cascade)
+  basePrice     Float
+  peakMultiplier Float     @default(1.0)  // 1.5x for peak hours
+  offPeakMultiplier Float  @default(0.7) // 0.7x for off-peak
+  lastMinuteDiscount Float @default(0.8) // 0.8x if booked < 2 hours
+  earlyBirdDiscount Float  @default(0.9) // 0.9x if booked > 30 days
+  occupancyRate Float      @default(0)   // Current occupancy %
+  finalPrice    Float      @default(0)
+  calculatedAt  DateTime   @default(now())
+
+  @@map("dynamic_prices")
+}
+
+model MerchantAnalytics {
+  id                String   @id @default(cuid())
+  venueId           String   @unique
+  venue             Venue    @relation(fields: [venueId], references: [id], onDelete: Cascade)
+  totalRevenue      Float    @default(0)
+  totalBookings     Int      @default(0)
+  totalCancellations Int     @default(0)
+  averageOccupancy  Float    @default(0)  // %
+  repeatCustomers   Int      @default(0)
+  averageRating     Float    @default(0)
+  topTimeSlot       String?
+  peakDaysOfWeek    String[]  // Array: ["friday", "saturday"]
+  lastCalculated    DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@map("merchant_analytics")
+}
+
+// ============================================
+// ACCESS CONTROL & RBAC MODELS
+// ============================================
+
+model AccessRole {
+  id            String     @id @default(cuid())
+  userId        String
+  user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleType      RoleType
+  venueId       String?    // For city managers, venue managers
+  venue         Venue?     @relation(fields: [venueId], references: [id], onDelete: SetNull)
+  city          String?    // For city managers: Ahmedabad, Delhi, etc.
+  permissions   String[]   // Array of permission strings
+  isActive      Boolean    @default(true)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@unique([userId, roleType, venueId])
+  @@index([userId])
+  @@index([roleType])
+  @@map("access_roles")
+}
+
+enum RoleType {
+  SUPER_ADMIN        // Global access
+  CITY_MANAGER       // Region-specific (e.g., Ahmedabad)
+  VENUE_MANAGER      // Single venue access
+  MODERATOR          // Fraud/Safety moderation
+  VENDOR             // Venue owner
+  USER              // Regular player
+}
+
+model AuditLog {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  action        AuditAction
+  entityType    String   // "Booking", "Payment", "User", etc.
+  entityId      String
+  oldValues     Json?    // Previous state
+  newValues     Json?    // New state
+  ipAddress     String?
+  userAgent     String?
+  createdAt     DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([entityType])
+  @@map("audit_logs")
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  PAYMENT
+  REFUND
+  FRAUD_FLAG
+  ROLE_CHANGE
+}
+
+// ============================================
+// RATING & ELO SYSTEM MODELS
+// ============================================
+
+model RatingTransaction {
+  id            String     @id @default(cuid())
+  gameId        String?
+  game          PickupGame? @relation(fields: [gameId], references: [id], onDelete: SetNull)
+  playerId      String
+  player        User       @relation("PlayerRatings", fields: [playerId], references: [id], onDelete: Cascade)
+  opponentIds   String[]   // Array of opponent IDs
+  oldRating     Float
+  newRating     Float
+  ratingChange  Float
+  skillTier     SkillTier
+  matchDate     DateTime
+  performanceScore Float   // 0-100 based on match stats
+  createdAt     DateTime   @default(now())
+
+  @@index([playerId])
+  @@index([gameId])
+  @@index([matchDate])
+  @@map("rating_transactions")
+}
+
+enum SkillTier {
+  BEGINNER       // 0-1000 Elo
+  INTERMEDIATE   // 1000-1500
+  ADVANCED       // 1500-2000
+  PROFESSIONAL   // 2000+
+}
+
+model PlayerPortfolio {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  currentRating    Float    @default(1000)
+  highestRating    Float    @default(1000)
+  totalMatches     Int      @default(0)
+  winsCount        Int      @default(0)
+  favoriteVenue    String?
+  preferredSport   String?
+  avgRating        Float    @default(0)
+  achievements     String[]  // Array of badges
+  lastMatchDate    DateTime?
+  updatedAt        DateTime @updatedAt
+
+  @@map("player_portfolios")
+}
+
+// ============================================
+// CORPORATE & B2B MODELS
+// ============================================
+
+model CorporateAccount {
+  id              String   @id @default(cuid())
+  companyName     String
+  companyEmail    String   @unique
+  adminUserId     String
+  admin           User     @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+  walletBalance   Float    @default(0)
+  walletCurrency  String   @default("INR")
+  employees       CorporateEmployee[]
+  bookings        Booking[]  // Company bookings
+  invoices        Invoice[]
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([adminUserId])
+  @@map("corporate_accounts")
+}
+
+model CorporateEmployee {
+  id                String   @id @default(cuid())
+  corporateId       String
+  corporate         CorporateAccount @relation(fields: [corporateId], references: [id], onDelete: Cascade)
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  departmentName    String?
+  creditsAllocated  Float    @default(0)
+  creditsUsed       Float    @default(0)
+  role              String   @default("employee")  // "manager", "employee"
+  createdAt         DateTime @default(now())
+
+  @@unique([corporateId, userId])
+  @@map("corporate_employees")
+}
+
+model Invoice {
+  id               String   @id @default(cuid())
+  corporateId      String
+  corporate        CorporateAccount @relation(fields: [corporateId], references: [id], onDelete: Cascade)
+  invoiceNumber    String   @unique
+  amount           Float
+  gstAmount        Float    @default(0)
+  totalAmount      Float
+  invoiceDate      DateTime @default(now())
+  dueDate          DateTime
+  status           InvoiceStatus @default(PENDING)
+  pdfUrl           String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([corporateId])
+  @@index([status])
+  @@map("invoices")
+}
+
+enum InvoiceStatus {
+  PENDING
+  SENT
+  VIEWED
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+// ============================================
+// COMMUNITY & CLUB MODELS
+// ============================================
+
+model Club {
+  id            String   @id @default(cuid())
+  name          String
+  description   String?
+  sport         String   // "running", "cycling", "cricket"
+  city          String
+  creatorId     String
+  creator       User     @relation("CreatedClubs", fields: [creatorId], references: [id], onDelete: Cascade)
+  members       ClubMember[]
+  sessions      ClubSession[]
+  image Url     String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([city])
+  @@index([sport])
+  @@map("clubs")
+}
+
+model ClubMember {
+  id            String   @id @default(cuid())
+  clubId        String
+  club          Club     @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User     @relation("ClubMemberships", fields: [userId], references: [id], onDelete: Cascade)
+  role          String   @default("member")  // "admin", "moderator", "member"
+  joinedAt      DateTime @default(now())
+
+  @@unique([clubId, userId])
+  @@map("club_members")
+}
+
+model ClubSession {
+  id            String   @id @default(cuid())
+  clubId        String
+  club          Club     @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  title         String
+  sport         String
+  sessionDate   DateTime
+  distance      Float?   // For running/cycling (km)
+  pace          Float?   // Minutes per km
+  participants  ClubSessionParticipant[]
+  chatRoom      String?  // Firebase chat room ID
+  createdAt     DateTime @default(now())
+
+  @@index([clubId])
+  @@index([sessionDate])
+  @@map("club_sessions")
+}
+
+model ClubSessionParticipant {
+  id            String   @id @default(cuid())
+  sessionId     String
+  session       ClubSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  userId        String
+  user          User     @relation("SessionParticipations", fields: [userId], references: [id], onDelete: Cascade)
+  status        String   @default("joined")  // "joined", "completed", "cancelled"
+  finishTime    DateTime?
+  distance      Float?   // Distance covered
+  joinedAt      DateTime @default(now())
+
+  @@unique([sessionId, userId])
+  @@map("club_session_participants")
+}
+
+model Leaderboard {
+  id            String   @id @default(cuid())
+  city          String
+  sport         String
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rank          Int
+  score         Float    // Points, distance, or Elo rating
+  month         Int      // 1-12
+  year          Int
+  createdAt     DateTime @default(now())
+
+  @@unique([city, sport, month, year, userId])
+  @@index([city])
+  @@index([sport])
+  @@index([rank])
+  @@map("leaderboards")
+}
+
+// ============================================
+// CONTROLLED CHAT MODEL
+// ============================================
+
+model ChatRoom {
+  id            String   @id @default(cuid())
+  name          String
+  type          ChatRoomType
+  matchId       String?  // For match-based chat
+  clubId        String?  // For club-based chat
+  createdById   String
+  createdBy     User     @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  allowedUsers  String[]  // Array of user IDs allowed in room
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  @@index([createdById])
+  @@index([type])
+  @@map("chat_rooms")
+}
+
+enum ChatRoomType {
+  MATCH_DISCUSSION   // For pickup game participants only
+  TEAM_CHAT         // For team members only
+  CLUB_CHAT         // For club members only
+  SUPPORT           // Support requests
+}
